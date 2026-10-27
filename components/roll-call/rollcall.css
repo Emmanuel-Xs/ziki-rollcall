@@ -1,0 +1,299 @@
+/* Agent Roll Call: keyframes, transitions and reduced-motion rules.
+   Colours come from the app's own zk-* tokens (see globals.css); nothing here defines a colour.
+
+   Motion budget. Transform and opacity only, one curve (Ziki's), nothing loops.
+   On arrival, about 1.5s:
+     0ms    card fades in and rises from scale(.96)            240ms
+     100ms+ each robot hops in from the left, 60ms apart       480ms
+     +300ms its line fades in as the robot steps forward       240ms
+     +420ms its arm waves once, or lifts and stays up          800ms / 300ms
+   Everything else waits for the person: hover or tap on a robot, or "Got it". */
+
+:root {
+  --rc-ease: cubic-bezier(0.2, 0.7, 0.2, 1); /* Ziki's entrance curve (overview.css) */
+}
+
+@keyframes rc-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes rc-card-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
+}
+
+/* A hop in from the left: up and over, land short, step forward into place. */
+@keyframes rc-hop {
+  0% {
+    opacity: 0;
+    transform: translateX(-36px);
+  }
+  40% {
+    opacity: 1;
+    transform: translate(-18px, -8px);
+  }
+  70% {
+    opacity: 1;
+    transform: translate(-10px, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes rc-line-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Lift, swing twice, settle. */
+@keyframes rc-wave {
+  0% {
+    transform: rotate(0deg);
+  }
+  25% {
+    transform: rotate(-80deg);
+  }
+  45% {
+    transform: rotate(-50deg);
+  }
+  65% {
+    transform: rotate(-80deg);
+  }
+  85% {
+    transform: rotate(-50deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+@keyframes rc-raise {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(-80deg);
+  }
+}
+
+/* Up to the brow, a quick dip, and hold. */
+@keyframes rc-salute {
+  0% {
+    transform: rotate(0deg);
+  }
+  45% {
+    transform: rotate(-105deg);
+  }
+  70% {
+    transform: rotate(-122deg);
+  }
+  100% {
+    transform: rotate(-105deg);
+  }
+}
+
+.rc-card {
+  transform-origin: top center;
+  animation: rc-card-in 240ms var(--rc-ease) both;
+}
+
+.rc-card[data-leaving='true'] {
+  animation: rc-card-out 180ms var(--rc-ease) both;
+}
+
+.rc-robot {
+  animation: rc-hop 480ms var(--rc-ease) both;
+  animation-delay: var(--rc-hop-delay, 0ms);
+}
+
+.rc-line {
+  animation: rc-line-in 240ms var(--rc-ease) both;
+  animation-delay: var(--rc-line-delay, 0ms);
+}
+
+/* Robots that have left for their rows. */
+.rc-robot[data-flown='true'] {
+  visibility: hidden;
+}
+
+/* The same card shown again for one return (after following "Answer"): no
+   entrance. The exit still plays, and a raised arm keeps its pose. */
+.rc-card[data-still='true']:not([data-leaving='true']),
+.rc-card[data-still='true'] .rc-robot,
+.rc-card[data-still='true'] .rc-line,
+.rc-arm-still {
+  animation: none;
+}
+
+/* The arm turns about its shoulder, (28, 32) in the robot's 40x40 viewBox. */
+.rc-arm {
+  transform-box: view-box;
+  transform-origin: 28px 32px;
+}
+
+.rc-arm-wave {
+  animation: rc-wave 800ms var(--rc-ease) both;
+}
+
+/* Rests raised, so a reader with motion off still sees who needs them. */
+.rc-arm-raise {
+  transform: rotate(-80deg);
+  animation: rc-raise 300ms var(--rc-ease) both;
+}
+
+.rc-arm-salute {
+  transform: rotate(-105deg);
+  animation: rc-salute 320ms var(--rc-ease) both;
+}
+
+.rc-arm-still {
+  animation: none;
+}
+
+/* The antenna light changes colour when a robot has been briefed. */
+.rc-light {
+  transition: fill 240ms ease;
+}
+
+/* Eyes follow the cursor (nudged from script, at most 2px) and ease back. */
+.rc-eyes {
+  transition: transform 90ms ease-out;
+}
+
+/* A sleeping robot: eyes shut to a line. "peek" leaves the right one open. */
+.rc-eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 140ms var(--rc-ease);
+}
+
+svg[data-sleep='asleep'] .rc-eye,
+svg[data-sleep='peek'] .rc-eye-l {
+  transform: scaleY(0.12);
+}
+
+/* The question card slides out from the raised hand and back into it. */
+.rc-qcard {
+  transform-origin: 14px 0;
+  opacity: 0;
+  visibility: hidden;
+  transform: translate(-16px, -4px) scale(0.94);
+  transition:
+    opacity 160ms var(--rc-ease),
+    transform 160ms var(--rc-ease),
+    visibility 0s linear 160ms;
+}
+
+.rc-qcard[data-open='true'] {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition:
+    opacity 160ms var(--rc-ease),
+    transform 160ms var(--rc-ease),
+    visibility 0s;
+}
+
+/* "Nothing to report", shown for 2s after the sleeping robot is tapped. */
+.rc-bubble {
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity 140ms var(--rc-ease),
+    transform 140ms var(--rc-ease);
+}
+
+.rc-bubble[data-show='true'] {
+  opacity: 1;
+  transform: none;
+}
+
+/* A robot flying to its row (positioned and animated from script). */
+.rc-flyer {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  transform-origin: center;
+}
+
+/* The switch knob slides with transform, not left; the track changes colour with it. */
+.rc-knob {
+  transition: transform 160ms var(--rc-ease);
+}
+
+.rc-track {
+  transition: background-color 160ms var(--rc-ease);
+}
+
+.rc-primary {
+  transition:
+    filter 120ms ease,
+    transform 120ms var(--rc-ease);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .rc-primary:hover {
+    filter: brightness(1.1);
+  }
+}
+
+.rc-primary:active {
+  transform: scale(0.97);
+}
+
+.rc-press {
+  transition:
+    background-color 120ms ease,
+    color 120ms ease,
+    transform 120ms var(--rc-ease);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .rc-press:hover {
+    background-color: var(--zk-chip);
+  }
+}
+
+.rc-press:active {
+  transform: scale(0.97);
+}
+
+/* ---------- Reduced motion ----------
+   Ziki's .zk-motion pattern: content stays, motion goes. The component also
+   renders text only (no gestures, no extras) when it is on. The data-reduce
+   copy is the "Preview reduced motion" demo control. */
+@media (prefers-reduced-motion: reduce) {
+  .rc-motion,
+  .rc-motion *,
+  .rc-flyer {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+.rc-motion[data-reduce='true'],
+.rc-motion[data-reduce='true'] * {
+  animation: none !important;
+  transition: none !important;
+}

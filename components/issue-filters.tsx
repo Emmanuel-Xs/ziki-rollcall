@@ -1,0 +1,822 @@
+"use client";
+
+import { Children, isValidElement, useEffect, useId, useRef, useState, useTransition, type ReactNode } from "react";
+import Image from "next/image";
+import { useRouter, useSearchParams } from "next/navigation";
+import { severities, statuses } from "@/lib/validations/issue";
+import { severityLabel, statusLabel } from "@/lib/labels";
+import { FINISHED_STATUS_FILTER } from "@/lib/issue-state";
+import {
+  BUG_SORT_OPTIONS,
+  bugSortLabels,
+  parseBugSort,
+} from "@/lib/issues-sort";
+import {
+  TAGS_PARAM,
+  parseTagFilter,
+  serializeTags,
+  suggestTags,
+} from "@/lib/tag-filter";
+import {
+  MINE_FILTER_OPTIONS,
+  mineFilterLabels,
+  parseMineFilter,
+  defaultSortFor,
+} from "@/lib/mine-filter";
+import {
+  PLATFORM_NONE,
+  PLATFORM_PARAM,
+  parsePlatformFilter,
+  platformChoices,
+  type PlatformOption,
+} from "@/lib/platform-filter";
+import { AREA_NONE, AREA_PARAM, parseProjectAreaFilter, type ProjectAreaOption } from "@/lib/project-area-filter";
+import { MILESTONE_NONE, MILESTONE_PARAM } from "@/lib/milestones";
+import {
+  MIN_SUGGEST_LENGTH,
+  type IssueSuggestion,
+} from "@/lib/issue-suggest";
+import { isTypingTarget } from "@/lib/keyboard-shortcuts";
+import { issuePath } from "@/lib/issue-ref";
+
+type TagType = { id: string; name: string; isActive?: boolean };
+
+type Suggestion =
+  | { kind: "tag"; id: string; name: string }
+  | { kind: "issue"; id: string; number: number; title: string };
+
+/** Long enough not to query on every keystroke, short enough to feel live. */
+const SEARCH_DEBOUNCE_MS = 300;
+
+/** Native radios keep the existing single-choice filters keyboard accessible. */
+function FilterSelect({ compact, id, value, onValueChange, onChoose, children, className, "aria-label": label }: {
+  compact: boolean; id: string; value: string; onValueChange: (value: string) => void;
+  children: ReactNode; className?: string; "aria-label": string;
+  onChoose?: () => void;
+}) {
+  if (!compact) return <select id={id} value={value} onChange={(event) => onValueChange(event.target.value)} className={className} aria-label={label}>{children}</select>;
+  return (
+    <div id={id} role="radiogroup" aria-label={label} className="issues-filter-options">
+      {Children.toArray(children).map((child) => {
+        if (!isValidElement<{ value: string; children: ReactNode }>(child)) return null;
+        const option = child.props;
+        return (
+          <label key={option.value} className="issues-filter-option">
+            <input type="radio" name={`issues-filter-${id}`} value={option.value} checked={value === option.value} onChange={() => onValueChange(option.value)} onClick={onChoose}
+              onKeyDown={(event) => { if (event.key === "Enter" && onChoose) { event.preventDefault(); onChoose(); } }} />
+            <span className="issues-filter-check" aria-hidden="true" />
+            <span>{option.children}</span>
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
+function IssuesSort({ value, onChange }: { value: ReturnType<typeof parseBugSort>; onChange: (value: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const panelId = useId();
+  const close = () => { setOpen(false); buttonRef.current?.focus(); };
+
+  useEffect(() => {
+    if (!open) return;
+    const positionPanel = () => {
+      const root = rootRef.current;
+      const panel = root?.querySelector<HTMLElement>('[role="dialog"]');
+      if (!root || !panel) return;
+      const anchor = root.getBoundingClientRect();
+      const bounds = panel.getBoundingClientRect();
+      const left = Math.max(16, Math.min(anchor.right - bounds.width, window.innerWidth - bounds.width - 16));
+      const top = Math.max(16, Math.min(anchor.bottom + 8, window.innerHeight - bounds.height - 16));
+      root.style.setProperty("--issues-sort-left", `${left}px`);
+      root.style.setProperty("--issues-sort-top", `${top}px`);
+    };
+    positionPanel();
+    window.addEventListener("resize", positionPanel);
+    document.addEventListener("scroll", positionPanel, true);
+    const frame = requestAnimationFrame(() => rootRef.current?.querySelector<HTMLInputElement>('input:checked')?.focus());
+    const outside = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); setOpen(false); buttonRef.current?.focus(); }
+    };
+    const focusOut = (event: FocusEvent) => {
+      if (!rootRef.current?.contains(event.relatedTarget as Node)) setOpen(false);
+    };
+    const root = rootRef.current;
+    root?.addEventListener("focusout", focusOut);
+    document.addEventListener("keydown", escape);
+    document.addEventListener("pointerdown", outside);
+    return () => {
+      cancelAnimationFrame(frame); document.removeEventListener("pointerdown", outside);
+      window.removeEventListener("resize", positionPanel); document.removeEventListener("scroll", positionPanel, true);
+      root?.removeEventListener("focusout", focusOut); document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="issues-sort">
+      <button ref={buttonRef} type="button" className="issues-sort-trigger" aria-label="Sort issues" title={`Sort: ${bugSortLabels[value]}`} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? panelId : undefined}
+        onClick={() => setOpen((current) => !current)}>
+        <Image src="/icons/issues-sort.svg" width={16} height={16} alt="" />
+      </button>
+      {open ? (
+        <div id={panelId} className="issues-sort-popover" role="dialog" aria-label="Sort options">
+          <p className="issues-sort-heading">Sort by</p>
+          <FilterSelect compact id="issues-sort-order" aria-label="Sort order" value={value} onValueChange={onChange} onChoose={close}>
+            {BUG_SORT_OPTIONS.map((option) => <option key={option} value={option}>{bugSortLabels[option]}</option>)}
+          </FilterSelect>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * #1054: the intake stage used to be a sidebar beside the list. It is a
+ * filter now, with the same `?stage=` values so old links keep working.
+ * Ideas are reports that are not ready to pass on. Issues are.
+ */
+const STAGE_PARAM = "stage";
+const STAGE_OPTIONS = [
+  { value: "reported", label: "Ideas" },
+  { value: "confirmed", label: "Ideas awaiting upvotes" },
+  { value: "ready", label: "Issues" },
+] as const;
+
+/** URL params owned by the filter bar. `page` is paging, not a filter. */
+const FILTER_PARAMS = [
+  "q",
+  STAGE_PARAM,
+  TAGS_PARAM,
+  "mine",
+  "status",
+  "severity",
+  PLATFORM_PARAM,
+  AREA_PARAM,
+  "sort",
+  MILESTONE_PARAM,
+];
+
+/** The issues URL with `changes` applied and paging reset. */
+function hrefWithChanges(
+  params: URLSearchParams,
+  changes: Record<string, string>,
+): string {
+  const next = new URLSearchParams(params.toString());
+  for (const [key, value] of Object.entries(changes)) {
+    if (value) next.set(key, value);
+    else next.delete(key);
+  }
+  next.delete("page");
+  const qs = next.toString();
+  return qs ? `/issues?${qs}` : "/issues";
+}
+
+export function IssueFilters({
+  tagTypes = [],
+  platforms = [],
+  milestones = [],
+  areas = [],
+  shortcutsEnabled = true,
+  stageCounts,
+  compact = false,
+  trailing,
+}: {
+  /** Extra controls at the end of the search/filter/sort row (the platform menu). */
+  trailing?: ReactNode;
+  tagTypes?: TagType[];
+  platforms?: PlatformOption[];
+  /** #289: open milestones first; closed ones stay selectable for history. */
+  milestones?: { id: string; title: string; isClosed: boolean }[];
+  areas?: ProjectAreaOption[];
+  shortcutsEnabled?: boolean;
+  /** Open issues in each intake stage, shown beside the Stage choices (#1054). */
+  stageCounts?: { reported: number; confirmed: number; ready: number };
+  /** Issues-page toolbar; other consumers retain the expanded search field. */
+  compact?: boolean;
+}) {
+  const router = useRouter();
+  const params = useSearchParams();
+  // #690: while a navigation kicked off from this control is in flight, expose
+  // a busy state so typing/searching gets visible + announced feedback.
+  const [isSearching, startSearchTransition] = useTransition();
+  const listId = useId();
+  const filterPanelId = useId();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const searchTriggerRef = useRef<HTMLButtonElement>(null);
+  const filterButtonRef = useRef<HTMLButtonElement>(null);
+  const filterPanelRef = useRef<HTMLDivElement>(null);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [searchExpanded, setSearchExpanded] = useState(false);
+
+  useEffect(() => {
+    if (!filterOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (
+        filterPanelRef.current?.contains(target) ||
+        filterButtonRef.current?.contains(target)
+      ) {
+        return;
+      }
+      setFilterOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setFilterOpen(false);
+        filterButtonRef.current?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [filterOpen]);
+
+  useEffect(() => {
+    if (!shortcutsEnabled) return;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      const isCmdOrCtrlK =
+        (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k";
+      const isSlash =
+        event.key === "/" &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey;
+
+      if (!isCmdOrCtrlK && !isSlash) return;
+      if (event.isComposing) return;
+
+      const target = event.target as HTMLElement | null;
+      const isEditable =
+        isTypingTarget(target) ||
+        Boolean(
+          target &&
+            (target.tagName === "INPUT" ||
+              target.tagName === "TEXTAREA" ||
+              target.tagName === "SELECT" ||
+              target.isContentEditable ||
+              Boolean(target.closest?.("[contenteditable='true']"))),
+        );
+
+      const inDialog =
+        Boolean(target?.closest?.('dialog[open], [role="dialog"], [role="alertdialog"], [data-shortcuts-ignore]')) ||
+        Boolean(document.querySelector('dialog[open], [role="dialog"], [role="alertdialog"]'));
+
+      if (isSlash && isEditable) return;
+      if (inDialog) return;
+      if (isCmdOrCtrlK && isEditable) return;
+
+      event.preventDefault();
+      const focusSearch = () => {
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      };
+      if (compact) {
+        setSearchExpanded(true);
+        requestAnimationFrame(focusSearch);
+      } else focusSearch();
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [shortcutsEnabled, compact]);
+
+  function updateMany(changes: Record<string, string>, replace = false) {
+    // Nothing changed: don't navigate (and don't reset the page, #132).
+    if (Object.entries(changes).every(([key, value]) => (params.get(key) ?? "") === value)) {
+      return;
+    }
+    const href = hrefWithChanges(params, changes);
+    startSearchTransition(() => {
+      if (replace) router.replace(href);
+      else router.push(href);
+    });
+  }
+
+  function update(key: string, value: string) {
+    updateMany({ [key]: value });
+  }
+
+  // Tag (issue type) filter from the search box (#102).
+  const selectedTags = parseTagFilter(params.get(TAGS_PARAM), tagTypes);
+  const selectedNames = selectedTags.map((t) => t.name);
+  const currentQuery = params.get("q") ?? "";
+  const [text, setText] = useState(currentQuery);
+  // Follow the URL when it changes from outside (Back, a link), adjusting
+  // state during render rather than in an effect.
+  const [lastQuery, setLastQuery] = useState(currentQuery);
+  if (currentQuery !== lastQuery) {
+    setLastQuery(currentQuery);
+    setText(currentQuery);
+  }
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(-1);
+  const [issueSuggestions, setIssueSuggestions] = useState<IssueSuggestion[]>([]);
+  const [suggestedFor, setSuggestedFor] = useState("");
+  // Enter or the Search button applies the query at once; the debounced
+  // navigation must not also fire and duplicate it (#690: leaving the box no
+  // longer commits the search).
+  const skipLiveRef = useRef<string | null>(null);
+  // The real search before the current typing session. Picking a tag is a
+  // filter choice, not text to search for, so it puts this back (#671).
+  const queryBeforeEditingRef = useRef(currentQuery);
+  // The first live update in a typing session pushes, so Back returns to the
+  // search before it; later pauses replace that entry (#671).
+  const livePushedRef = useRef(false);
+  const paramsString = params.toString();
+
+  // Filter the list a beat after typing stops.
+  useEffect(() => {
+    const trimmed = text.trim();
+    if (trimmed === currentQuery.trim()) {
+      if (skipLiveRef.current === trimmed) skipLiveRef.current = null;
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (skipLiveRef.current === trimmed) {
+        skipLiveRef.current = null;
+        return;
+      }
+      const href = hrefWithChanges(new URLSearchParams(paramsString), { q: trimmed });
+      startSearchTransition(() => {
+        if (livePushedRef.current) router.replace(href);
+        else {
+          livePushedRef.current = true;
+          router.push(href);
+        }
+      });
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [text, currentQuery, paramsString, router, startSearchTransition]);
+
+  // Matching issue titles for the dropdown (#671), also debounced.
+  useEffect(() => {
+    const query = text.trim();
+    // Suggestions already on screen are hidden by `suggestedFor` when they no
+    // longer match, so there is nothing to clear here.
+    if (!open || query.length < MIN_SUGGEST_LENGTH) return;
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/issues/suggest?q=${encodeURIComponent(query)}`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) return;
+        const body = (await res.json()) as { issues?: IssueSuggestion[] };
+        setSuggestedFor(query);
+        setIssueSuggestions(body.issues ?? []);
+      } catch {
+        // Aborted by the next keystroke, or offline: suggest nothing.
+      }
+    }, SEARCH_DEBOUNCE_MS);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [text, open]);
+
+  // Only active types are suggested; inactive ones still work in a shared link.
+  const tagSuggestions: Suggestion[] = open
+    ? suggestTags(tagTypes.filter((t) => t.isActive !== false), text, selectedNames).map(
+        (type) => ({ kind: "tag", id: type.id, name: type.name }),
+      )
+    : [];
+  // Only results for the text in the box now; stale ones would mislead.
+  const titleSuggestions: Suggestion[] =
+    open && suggestedFor === text.trim()
+      ? issueSuggestions.map((issue) => ({
+          kind: "issue",
+          id: issue.id,
+          number: issue.number,
+          title: issue.title,
+        }))
+      : [];
+  const suggestions = [...tagSuggestions, ...titleSuggestions];
+
+  function addTag(name: string) {
+    // The typed text was only for finding the tag, so put the real search back.
+    const restore = queryBeforeEditingRef.current;
+    setText(restore);
+    skipLiveRef.current = restore;
+    setOpen(false);
+    setActive(-1);
+    // Replace a live-search entry still in history so it does not linger.
+    updateMany(
+      {
+        [TAGS_PARAM]: serializeTags([...selectedNames, name]),
+        q: restore,
+      },
+      livePushedRef.current,
+    );
+    livePushedRef.current = false;
+  }
+
+  function applyQueryNow() {
+    const trimmed = text.trim();
+    queryBeforeEditingRef.current = trimmed;
+    if (trimmed !== currentQuery.trim()) skipLiveRef.current = trimmed;
+    update("q", trimmed);
+    livePushedRef.current = false;
+  }
+
+  function pickSuggestion(suggestion: Suggestion) {
+    if (suggestion.kind === "tag") {
+      addTag(suggestion.name);
+      return;
+    }
+    setOpen(false);
+    setActive(-1);
+    router.push(issuePath(suggestion.number));
+  }
+
+  function removeTag(name: string) {
+    update(TAGS_PARAM, serializeTags(selectedNames.filter((n) => n !== name)));
+  }
+
+  /** Real link for each chip, so removing a tag also works before hydration. */
+  function tagHref(name: string) {
+    const next = new URLSearchParams(params.toString());
+    const rest = serializeTags(selectedNames.filter((n) => n !== name));
+    if (rest) next.set(TAGS_PARAM, rest);
+    else next.delete(TAGS_PARAM);
+    next.delete("page");
+    const qs = next.toString();
+    return qs ? `/issues?${qs}` : "/issues";
+  }
+
+  const currentSort = parseBugSort(
+    params.get("sort"),
+    defaultSortFor(parseMineFilter(params.get("mine"))),
+  );
+  const currentPlatform = parsePlatformFilter(params.get(PLATFORM_PARAM), platforms) ?? "";
+  const platformOptions = platformChoices(platforms, currentPlatform || null);
+  const currentArea = parseProjectAreaFilter(params.get(AREA_PARAM), areas) ?? "";
+  const currentMine = parseMineFilter(params.get("mine")) ?? "";
+  const currentMilestone = params.get(MILESTONE_PARAM) ?? "";
+
+  const currentStage = STAGE_OPTIONS.find((option) => option.value === params.get(STAGE_PARAM))?.value ?? "";
+
+  const activeFilterCount = [
+    Boolean(currentStage),
+    Boolean(params.get("status")),
+    Boolean(params.get("severity")),
+    Boolean(currentMine),
+    selectedNames.length > 0,
+    currentPlatform === PLATFORM_NONE,
+    Boolean(currentArea),
+    Boolean(currentMilestone),
+    Boolean(params.get("sort")),
+  ].filter(Boolean).length;
+
+  // Only worth offering when there is something to clear (#336).
+  const hasActiveFilters = FILTER_PARAMS.some((key) =>
+    key === "mine" ? Boolean(currentMine) : (params.get(key) ?? "") !== "",
+  );
+
+  function clearAllFilters() {
+    // Empty the box straight away: until the navigation lands, the local draft
+    // would otherwise keep showing the text that was just cleared.
+    skipLiveRef.current = "";
+    livePushedRef.current = false;
+    setText("");
+    setOpen(false);
+    setActive(-1);
+    setFilterOpen(false);
+    router.push("/issues");
+  }
+
+  const milestoneValue =
+    milestones.some((m) => m.id === params.get(MILESTONE_PARAM)) ||
+    params.get(MILESTONE_PARAM) === MILESTONE_NONE
+      ? (params.get(MILESTONE_PARAM) ?? "")
+      : "";
+
+  const selectClass =
+    "w-full appearance-none rounded-xl border border-zk-border bg-zk-surface px-3.5 py-0 h-11 text-sm font-medium text-zk-text focus:border-electric-blue focus:outline-none focus:ring-1 focus:ring-electric-blue";
+  const fieldLabelClass = "mb-1.5 block text-[13px] font-semibold text-zk-text2";
+
+  return (
+    <div className={`space-y-3 print:hidden ${compact ? "issues-filters" : ""}`}>
+      <div className="flex flex-wrap items-center gap-2.5">
+        <div className={`min-w-0 flex-1 basis-[240px] max-w-xs ${compact ? `issues-search ${searchExpanded ? "issues-search-expanded" : ""}` : ""}`}>
+          <label htmlFor="q" className="sr-only">Search</label>
+          <div className="relative" aria-busy={isSearching} data-testid="search-box">
+            <div className="flex h-[42px] items-center gap-2 rounded-full border border-zk-border bg-zk-surface px-4">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-zk-muted" aria-hidden="true">
+                <circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" />
+              </svg>
+              {compact ? (
+                <button ref={searchTriggerRef} type="button" className="issues-search-trigger"
+                  aria-label={searchExpanded ? "Close search" : "Search issues"} title={searchExpanded ? "Close search" : "Search issues"} aria-expanded={searchExpanded} aria-controls="q"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    if (searchExpanded) {
+                      setSearchExpanded(false); setOpen(false); setActive(-1);
+                      requestAnimationFrame(() => searchTriggerRef.current?.focus());
+                    } else {
+                      setSearchExpanded(true);
+                      requestAnimationFrame(() => inputRef.current?.focus());
+                    }
+                  }}>
+                  {searchExpanded ? <Image src="/icons/issues-close.svg" width={18} height={18} alt="" /> : null}
+                </button>
+              ) : null}
+              <input
+                ref={inputRef}
+                id="q"
+                name="q"
+                role="combobox"
+                aria-haspopup="listbox"
+                aria-autocomplete="list"
+                aria-expanded={suggestions.length > 0}
+                aria-controls={suggestions.length > 0 ? listId : undefined}
+                aria-activedescendant={active >= 0 && suggestions[active] ? `${listId}-${active}` : undefined}
+                autoComplete="off"
+                value={text}
+                placeholder={compact ? "Search issues…" : "Search, or type a tag like Design"}
+                className="min-w-0 flex-1 border-0 bg-transparent text-sm text-zk-text outline-none placeholder:text-zk-muted"
+                onChange={(event) => { setText(event.target.value); setOpen(true); setActive(-1); }}
+                onFocus={() => { queryBeforeEditingRef.current = currentQuery; livePushedRef.current = false; setOpen(true); }}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowDown" && suggestions.length > 0) { event.preventDefault(); setActive((i) => (i + 1) % suggestions.length); }
+                  else if (event.key === "ArrowUp" && suggestions.length > 0) { event.preventDefault(); setActive((i) => (i <= 0 ? suggestions.length - 1 : i - 1)); }
+                  else if (event.key === "Escape") {
+                    setOpen(false); setActive(-1); setSearchExpanded(false);
+                    if (compact) requestAnimationFrame(() => searchTriggerRef.current?.focus());
+                  }
+                  else if (event.key === "Enter") {
+                    event.preventDefault();
+                    const picked = active >= 0 ? suggestions[active] : undefined;
+                    if (picked) pickSuggestion(picked); else applyQueryNow();
+                  } else if (event.key === "Backspace" && text === "" && selectedNames.length > 0) {
+                    removeTag(selectedNames[selectedNames.length - 1]);
+                  }
+                }}
+                onBlur={() => { setOpen(false); setActive(-1); }}
+              />
+              {!text && shortcutsEnabled ? (
+                <kbd className="hidden shrink-0 select-none rounded-md border border-zk-border px-1.5 py-0.5 text-[11px] font-bold text-zk-muted sm:inline-flex">/</kbd>
+              ) : null}
+            </div>
+            {suggestions.length > 0 ? (
+              <ul id={listId} role="listbox" aria-label="Search suggestions" className="absolute left-0 right-0 z-20 mt-1 overflow-hidden rounded-[20px] border border-zk-border bg-zk-surface py-1 text-sm shadow-[0_20px_48px_rgba(11,23,51,0.16)]">
+                {suggestions.map((suggestion, index) => (
+                  // eslint-disable-next-line jsx-a11y/click-events-have-key-events
+                  <li
+                    key={`${suggestion.kind}-${suggestion.id}`}
+                    id={`${listId}-${index}`}
+                    role="option"
+                    aria-selected={index === active}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onMouseEnter={() => setActive(index)}
+                    onClick={() => pickSuggestion(suggestion)}
+                    className={`flex cursor-pointer items-center justify-between gap-3 px-3.5 py-2.5 ${index === active ? "bg-zk-tint text-zk-accent" : "text-zk-text"}`}
+                  >
+                    {suggestion.kind === "tag" ? (
+                      <><span className="font-semibold">{suggestion.name}</span><span className="shrink-0 text-xs text-zk-muted">Filter by tag</span></>
+                    ) : (
+                      <><span className="min-w-0 truncate"><span className="tabular-nums text-zk-muted">#{suggestion.number}</span> {suggestion.title}</span><span className="shrink-0 text-xs text-zk-muted">Open issue</span></>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        </div>
+
+        <button type="button" onClick={applyQueryNow} disabled={isSearching} className={`inline-flex h-[42px] shrink-0 items-center gap-1.5 rounded-full border-0 bg-electric-blue-strong px-4 text-sm font-bold text-white shadow-[0_8px_20px_rgba(46,111,239,0.30)] transition-colors hover:brightness-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-electric-blue focus-visible:ring-offset-2 disabled:cursor-default disabled:opacity-70 ${compact ? "issues-search-submit" : ""}`}>
+          {isSearching ? (
+            <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" /></svg>
+          ) : (
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 11a6 6 0 11-12 0 6 6 0 0112 0z" /></svg>
+          )}
+          <span>Search</span>
+        </button>
+
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          <div className="relative shrink-0">
+            <button
+              ref={filterButtonRef}
+              type="button"
+              aria-haspopup="dialog"
+              aria-expanded={filterOpen}
+              aria-controls={filterPanelId}
+              aria-label={activeFilterCount > 0 ? `Filter (${activeFilterCount} active)` : "Filter"}
+              onClick={() => setFilterOpen((prev) => !prev)}
+              className={`issues-filter-trigger inline-flex h-[42px] items-center gap-2 rounded-full border px-4 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-electric-blue focus-visible:ring-offset-2 ${
+                activeFilterCount > 0 || filterOpen
+                  ? "border-electric-blue-strong bg-zk-tint text-zk-accent"
+                  : "border-zk-border bg-zk-surface text-zk-text hover:bg-zk-chip"
+              }`}
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M22 3H2l8 9.5V19l4 2v-8.5z" /></svg>
+              <span>Filter</span>
+              {activeFilterCount > 0 ? (
+                <span aria-hidden="true" className="inline-flex items-center justify-center rounded-full bg-electric-blue-strong px-1.5 py-0.5 text-[11px] font-bold leading-none text-white">{activeFilterCount}</span>
+              ) : null}
+              <svg className={`h-3.5 w-3.5 text-current transition-transform ${filterOpen ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="m6 9 6 6 6-6" /></svg>
+            </button>
+
+            {filterOpen ? (
+              <div ref={filterPanelRef} id={filterPanelId} role="dialog" aria-label="Filters" className="issues-filter-dialog absolute right-0 z-30 mt-2.5 flex w-[340px] max-w-[calc(100vw-3rem)] flex-col gap-3.5 rounded-[20px] border border-zk-border bg-zk-surface p-5 shadow-[0_20px_48px_rgba(11,23,51,0.16)]">
+                <div className="flex items-center justify-between border-b border-zk-divider pb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base font-extrabold text-zk-text">Filters</span>
+                    {activeFilterCount > 0 ? <span className="rounded-full bg-zk-tint px-2 py-0.5 text-[11px] font-bold text-zk-accent">{activeFilterCount} active</span> : null}
+                  </div>
+                  {hasActiveFilters ? (
+                    <button type="button" onClick={clearAllFilters} className="h-8 rounded-full px-2.5 text-[13px] font-bold text-zk-accent hover:bg-zk-tint">Reset</button>
+                  ) : null}
+                  {compact ? <button type="button" aria-label="Close filters" title="Close filters" className="issues-filter-close" onClick={() => { setFilterOpen(false); filterButtonRef.current?.focus(); }}><Image src="/icons/issues-close.svg" width={18} height={18} alt="" /></button> : null}
+                </div>
+
+                <div className="max-h-[70vh] space-y-3.5 overflow-y-auto pr-1">
+                  <div>
+                    <label htmlFor="mine" className={fieldLabelClass}>Show</label>
+                    <FilterSelect compact={compact} aria-label="Show" id="mine" className={selectClass} value={currentMine === "reported" ? "created" : currentMine} onValueChange={(value) => update("mine", value)}>
+                      <option value="">All issues</option>
+                      {MINE_FILTER_OPTIONS.map((option) => (<option key={option} value={option}>{mineFilterLabels[option]}</option>))}
+                    </FilterSelect>
+                  </div>
+                  <div>
+                    <label htmlFor="stage" className={fieldLabelClass}>Kind</label>
+                    <FilterSelect compact={compact} aria-label="Kind" id="stage" className={selectClass} value={currentStage} onValueChange={(value) => update(STAGE_PARAM, value)}>
+                      <option value="">Ideas and issues</option>
+                      {STAGE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>{stageCounts ? `${option.label} (${stageCounts[option.value]})` : option.label}</option>
+                      ))}
+                    </FilterSelect>
+                  </div>
+                  {!compact ? <div>
+                    <label htmlFor="status" className={fieldLabelClass}>Status</label>
+                    <FilterSelect compact={compact} aria-label="Status" id="status" className={selectClass} value={params.get("status") ?? ""} onValueChange={(value) => update("status", value)}>
+                      <option value="">All</option>
+                      {statuses.map((status) => (<option key={status} value={status}>{statusLabel[status]}</option>))}
+                      <option value={FINISHED_STATUS_FILTER}>Closed (incl. resolved)</option>
+                    </FilterSelect>
+                  </div> : null}
+                  <div>
+                    <label htmlFor="severity" className={fieldLabelClass}>Severity</label>
+                    <FilterSelect compact={compact} aria-label="Severity" id="severity" className={selectClass} value={params.get("severity") ?? ""} onValueChange={(value) => update("severity", value)}>
+                      <option value="">All</option>
+                      {severities.map((severity) => (<option key={severity} value={severity}>{severityLabel[severity]}</option>))}
+                    </FilterSelect>
+                  </div>
+                  <div>
+                    <label htmlFor="category" className={fieldLabelClass}>Category</label>
+                    <FilterSelect compact={compact} aria-label="Category" id="category" className={selectClass} value={selectedNames[0] ?? ""} onValueChange={(value) => update(TAGS_PARAM, serializeTags([value]))}>
+                      <option value="">All</option>
+                      {Array.from(new Set(["Features", "Fixes", "Design", "Marketing", "Documentation", "Other", ...tagTypes.filter((t) => t.isActive !== false).map((t) => t.name)])).map((name) => (
+                        <option key={name} value={name}>{name}</option>
+                      ))}
+                    </FilterSelect>
+                  </div>
+                  {platformOptions.length > 0 ? (
+                    <div>
+                      <label htmlFor="platform" className={fieldLabelClass}>Platform</label>
+                      <FilterSelect compact={compact} aria-label="Platform" id="platform" className={selectClass} value={currentPlatform} onValueChange={(value) => update(PLATFORM_PARAM, value)}>
+                        <option value="">All</option>
+                        {platformOptions.map((platform) => (<option key={platform.id} value={platform.id}>{platform.name}</option>))}
+                        <option value={PLATFORM_NONE}>No platform</option>
+                      </FilterSelect>
+                    </div>
+                  ) : null}
+                  {areas.length > 0 ? (
+                    <div>
+                      <label htmlFor="area" className={fieldLabelClass}>Area</label>
+                      <FilterSelect compact={compact} aria-label="Area" id="area" className={selectClass} value={currentArea} onValueChange={(value) => update(AREA_PARAM, value)}>
+                        <option value="">All</option>
+                        {areas.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}
+                        <option value={AREA_NONE}>No area</option>
+                      </FilterSelect>
+                    </div>
+                  ) : null}
+                  {milestones.length > 0 ? (
+                    <div>
+                      <label htmlFor="milestone" className={fieldLabelClass}>Milestone</label>
+                      <FilterSelect compact={compact} aria-label="Milestone" id="milestone" className={selectClass} value={milestoneValue} onValueChange={(value) => update(MILESTONE_PARAM, value)}>
+                        <option value="">All</option>
+                        {milestones.map((m) => (<option key={m.id} value={m.id}>{m.title}{m.isClosed ? " (closed)" : ""}</option>))}
+                        <option value={MILESTONE_NONE}>No milestone</option>
+                      </FilterSelect>
+                    </div>
+                  ) : null}
+                  <div>
+                    <label htmlFor="sort" className={fieldLabelClass}>Sort By</label>
+                    <FilterSelect compact={compact} aria-label="Sort By" id="sort" className={selectClass} value={currentSort} onValueChange={(value) => update("sort", value)}>
+                      {BUG_SORT_OPTIONS.map((option) => (<option key={option} value={option}>{bugSortLabels[option]}</option>))}
+                    </FilterSelect>
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-1">
+                  <button type="button" onClick={() => setFilterOpen(false)} className="h-[42px] flex-1 rounded-full border border-zk-border bg-zk-surface font-bold text-zk-text hover:bg-zk-chip">{compact ? "Close" : "Cancel"}</button>
+                  <button type="button" onClick={() => setFilterOpen(false)} className="h-[42px] flex-1 rounded-full border-0 bg-electric-blue-strong font-bold text-white shadow-[0_8px_20px_rgba(46,111,239,0.30)] hover:brightness-105">{compact ? "Done" : "Apply filters"}</button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+        {compact ? (
+          <IssuesSort value={currentSort} onChange={(value) => update("sort", value)} />
+        ) : null}
+        {trailing}
+      </div>
+
+      {selectedTags.length > 0 ? (
+        <ul className="issues-selected-tags flex flex-wrap items-center gap-1.5" aria-label="Tag filters">
+          {selectedTags.map((type) => (
+            <li key={type.id}>
+              <a href={tagHref(type.name)} onClick={(event) => { event.preventDefault(); removeTag(type.name); }} aria-label={`Remove tag ${type.name}`} className="inline-flex items-center gap-1 rounded-full border border-zk-border bg-zk-tint py-0.5 pl-2.5 pr-1.5 text-xs font-bold text-zk-accent hover:bg-zk-chip focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-electric-blue">
+                {type.name}<span aria-hidden="true">×</span>
+              </a>
+            </li>
+          ))}
+          {selectedTags.length > 1 ? (
+            <li><button type="button" onClick={() => update(TAGS_PARAM, "")} className="px-1 text-xs text-zk-muted hover:text-zk-text hover:underline">Clear tags</button></li>
+          ) : null}
+        </ul>
+      ) : null}
+
+      {hasActiveFilters && (!compact || FILTER_PARAMS.some((param) => param !== "status" && Boolean(params.get(param)))) ? (
+        <div className="issues-active-filters flex w-full flex-wrap items-center gap-2 border-t border-zk-divider pt-2">
+          <span className="text-xs font-semibold text-zk-muted">Active filters:</span>
+          {currentQuery ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-zk-border bg-zk-tint py-0.5 pl-2.5 pr-1.5 text-xs font-bold text-zk-accent">
+              Search: &ldquo;{currentQuery}&rdquo;
+              <button type="button" onClick={() => { setText(""); update("q", ""); }} aria-label="Remove search filter" className="ml-0.5 rounded-full p-0.5 hover:bg-zk-chip">✕</button>
+            </span>
+          ) : null}
+          {currentStage ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-zk-border bg-zk-chip py-0.5 pl-2.5 pr-1.5 text-xs font-bold text-zk-text">
+              Kind: {STAGE_OPTIONS.find((option) => option.value === currentStage)?.label}
+              <button type="button" onClick={() => update(STAGE_PARAM, "")} aria-label="Remove stage filter" className="ml-0.5 rounded-full p-0.5 text-zk-muted hover:bg-zk-divider">✕</button>
+            </span>
+          ) : null}
+          {params.get("status") ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-transparent bg-zk-ok-bg py-0.5 pl-2.5 pr-1.5 text-xs font-bold text-zk-ok-fg">
+              Status: {params.get("status") === FINISHED_STATUS_FILTER ? "Closed (incl. resolved)" : statusLabel[params.get("status") as keyof typeof statusLabel] ?? params.get("status")}
+              <button type="button" onClick={() => update("status", "")} aria-label="Remove status filter" className="ml-0.5 rounded-full p-0.5 hover:bg-zk-chip">✕</button>
+            </span>
+          ) : null}
+          {params.get("severity") ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-zk-warn-bd bg-zk-warn-bg py-0.5 pl-2.5 pr-1.5 text-xs font-bold text-zk-warn-fg">
+              Severity: {severityLabel[params.get("severity") as keyof typeof severityLabel] ?? params.get("severity")}
+              <button type="button" onClick={() => update("severity", "")} aria-label="Remove severity filter" className="ml-0.5 rounded-full p-0.5 hover:bg-zk-chip">✕</button>
+            </span>
+          ) : null}
+          {selectedTags.map((type) => (
+            <span key={type.id} className="inline-flex items-center gap-1 rounded-full border border-zk-border bg-zk-tint py-0.5 pl-2.5 pr-1.5 text-xs font-bold text-zk-accent">
+              Category: {type.name}
+              <button type="button" onClick={() => removeTag(type.name)} aria-label={`Remove tag ${type.name}`} className="ml-0.5 rounded-full p-0.5 hover:bg-zk-chip">✕</button>
+            </span>
+          ))}
+          {currentPlatform === PLATFORM_NONE ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-transparent bg-zk-info-bg py-0.5 pl-2.5 pr-1.5 text-xs font-bold text-zk-info-fg">
+              Platform: No platform
+              <button type="button" onClick={() => update(PLATFORM_PARAM, "")} aria-label="Remove platform filter" className="ml-0.5 rounded-full p-0.5 hover:bg-zk-chip">✕</button>
+            </span>
+          ) : null}
+          {currentArea ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-zk-border bg-zk-tint py-0.5 pl-2.5 pr-1.5 text-xs font-bold text-zk-accent">
+              Area: {currentArea === AREA_NONE ? "No area" : areas.find((area) => area.id === currentArea)?.name ?? currentArea}
+              <button type="button" onClick={() => update(AREA_PARAM, "")} aria-label="Remove area filter" className="ml-0.5 rounded-full p-0.5 hover:bg-zk-chip">✕</button>
+            </span>
+          ) : null}
+          {currentMilestone ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-zk-border bg-zk-chip py-0.5 pl-2.5 pr-1.5 text-xs font-bold text-zk-text">
+              Milestone: {currentMilestone === MILESTONE_NONE ? "No milestone" : milestones.find((milestone) => milestone.id === currentMilestone)?.title ?? currentMilestone}
+              <button type="button" onClick={() => update(MILESTONE_PARAM, "")} aria-label="Remove milestone filter" className="ml-0.5 rounded-full p-0.5 text-zk-muted hover:bg-zk-divider">✕</button>
+            </span>
+          ) : null}
+          {currentMine ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-zk-border bg-zk-chip py-0.5 pl-2.5 pr-1.5 text-xs font-bold text-zk-text">
+              View: {mineFilterLabels[currentMine as keyof typeof mineFilterLabels] ?? currentMine}
+              <button type="button" onClick={() => update("mine", "")} aria-label="Remove view filter" className="ml-0.5 rounded-full p-0.5 text-zk-muted hover:bg-zk-divider">✕</button>
+            </span>
+          ) : null}
+          {params.get("sort") ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-zk-border bg-zk-chip py-0.5 pl-2.5 pr-1.5 text-xs font-bold text-zk-text">
+              Sort: {bugSortLabels[currentSort]}
+              <button type="button" onClick={() => update("sort", "")} aria-label="Remove sort filter" className="ml-0.5 rounded-full p-0.5 text-zk-muted hover:bg-zk-divider">✕</button>
+            </span>
+          ) : null}
+          <button type="button" onClick={clearAllFilters} className="ml-auto rounded-full border border-zk-border bg-zk-surface px-3 py-1.5 text-xs font-bold text-zk-text hover:bg-zk-chip focus:border-electric-blue focus:outline-none focus:ring-1 focus:ring-electric-blue">
+            Clear all filters
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+
+export { IssueFilters as BugFilters };
