@@ -19,7 +19,7 @@ This is a design demo (HNG15 Week 5, Team Vulcan) built on a copy of the real Zi
 
 - 113 files are byte-for-byte copies from the reference repo (styles, theme tokens, fonts, the app header, the overview components, the shell pieces and the lib helpers they use).
 - The backend is gone. `requireUser`, Prisma and the loaders are replaced by [`lib/mock-data.ts`](./lib/mock-data.ts) and [`lib/mock-issues.ts`](./lib/mock-issues.ts). Server actions (`app/actions/*`) are mocks that keep the same names, so the copied components did not have to change. `@prisma/client` is a type-only shim ([`lib/prisma-client-shim.ts`](./lib/prisma-client-shim.ts)).
-- Small edits to copied files: `components/agent-graphic.tsx` (optional `gesture`, eye, sleep and antenna hooks; the plain robot is unchanged) and `components/dashboard-agents.tsx` (two `data-` attributes so robots can land on their row).
+- Small edits to copied files: `lib/format.ts` (Vercel sets `TZ=:UTC`, which `Intl` rejects, so a bad zone falls back to Ziki's default), `components/agent-graphic.tsx` (optional `gesture`, eye, sleep and antenna hooks; the plain robot is unchanged) and `components/dashboard-agents.tsx` (two `data-` attributes so robots can land on their row).
 
 ## The roll call
 
