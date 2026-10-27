@@ -14,7 +14,7 @@ export type Summary = {
   issue?: number
 }
 
-/** A line on the card. Quiet and offline agents share one. */
+/** A line on the card. Quiet and offline agents share one: "Claude and X: nothing to report." */
 export type RollRow = {
   id: string
   tier: Tier
@@ -101,12 +101,11 @@ export function buildRollCall(agents: RollAgent[]): RollRow[] {
   }))
 
   if (quiet.length) {
-    const allOffline = quiet.every((s) => s.agent.status === 'offline')
     rows.push({
       id: 'quiet',
       tier: 'quiet',
       names: joinNames(quiet.map((s) => s.agent.name)),
-      sentence: allOffline ? 'Offline, nothing to report.' : 'Nothing to report.',
+      sentence: 'nothing to report.',
       agent: quiet[0].agent,
     })
   }

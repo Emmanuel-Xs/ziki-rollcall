@@ -4,7 +4,7 @@ import "./rollcall.css";
 import { useRollCall } from "./RollCallHost";
 
 const demoButton =
-  "rc-press inline-flex min-h-10 items-center rounded-full border border-zk-border px-4 text-sm font-semibold text-zk-text";
+  "rc-press inline-flex min-h-9 items-center rounded-full border border-zk-border px-4 text-sm font-semibold text-zk-text";
 
 /** Reviewer controls, outside the card and clearly labelled. */
 export function DemoControls() {
@@ -18,7 +18,7 @@ export function DemoControls() {
         : "Dismissed, waiting for news";
 
   return (
-    <section aria-labelledby="demo-controls-title" className="rounded-[20px] border border-dashed border-zk-border p-4">
+    <section aria-labelledby="demo-controls-title" className="rounded-[20px] border border-dashed border-zk-border px-4 py-3">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
         <h2 id="demo-controls-title" className="m-0 text-xs font-bold uppercase tracking-wider text-zk-accent">
           Demo controls

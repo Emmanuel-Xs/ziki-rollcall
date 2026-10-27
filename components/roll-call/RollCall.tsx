@@ -25,6 +25,7 @@ const LEAVE_MS = 180;
 const PEEK_MS = 2000; // how long a sleeping robot keeps an eye open
 
 const GREEN = "#22C55E"; // the "working" antenna light
+const ROBOT = 36; // px; the card is short so the stat cards stay in view
 
 type Phase = "idle" | "salute" | "fly" | "fold";
 type Leaving = "gotit" | "disable";
@@ -187,7 +188,7 @@ function Row({
     <AgentGraphic
       name={row.agent.name}
       status={status}
-      size={44}
+      size={ROBOT}
       gesture={gesture}
       gestureKey={again + (saluting ? 1000 : 0)}
       gestureDelay={gestureDelay}
@@ -198,7 +199,7 @@ function Row({
     />
   );
 
-  let wrapped: React.ReactNode = <span className="block h-11 w-11">{robot}</span>;
+  let wrapped: React.ReactNode = <span className="block h-9 w-9">{robot}</span>;
   if (interactive && row.tier === "needs") {
     wrapped = (
       <button
@@ -207,7 +208,7 @@ function Row({
         aria-expanded={questionOpen}
         aria-controls={`rc-q-${row.id}`}
         onClick={() => onToggleQuestion(row.id)}
-        className="block h-11 w-11 cursor-pointer rounded-xl border-0 bg-transparent p-0"
+        className="block h-9 w-9 cursor-pointer rounded-xl border-0 bg-transparent p-0"
       >
         {robot}
       </button>
@@ -221,7 +222,7 @@ function Row({
         onPointerEnter={(e) => e.pointerType === "mouse" && play()}
         onPointerDown={(e) => e.pointerType !== "mouse" && play()}
         onFocus={(e) => e.currentTarget.matches(":focus-visible") && play()}
-        className="block h-11 w-11 cursor-default rounded-xl border-0 bg-transparent p-0"
+        className="block h-9 w-9 cursor-default rounded-xl border-0 bg-transparent p-0"
       >
         {robot}
       </button>
@@ -232,7 +233,7 @@ function Row({
         type="button"
         aria-label={`${row.names} is offline: tap to wake`}
         onClick={() => onPeek(row.id)}
-        className="block h-11 w-11 cursor-pointer rounded-xl border-0 bg-transparent p-0"
+        className="block h-9 w-9 cursor-pointer rounded-xl border-0 bg-transparent p-0"
       >
         {robot}
       </button>
@@ -241,7 +242,7 @@ function Row({
 
   const question = row.agent.question;
   return (
-    <li ref={rowRef} className="relative flex gap-3.5 border-t border-zk-divider py-3.5 first:border-t-0">
+    <li ref={rowRef} className="relative flex items-center gap-3 border-t border-zk-divider py-2 first:border-t-0">
       <div
         ref={(el) => registerRobot(row.id, el)}
         className="rc-robot shrink-0"
@@ -254,25 +255,29 @@ function Row({
         className="rc-line min-w-0 flex-1"
         style={{ "--rc-line-delay": `${hopDelay + LINE_AFTER}ms` } as CSSProperties}
       >
-        <p className="m-0 text-[13px] font-bold text-zk-text">{row.names}</p>
-        <p className="m-0 mt-0.5 text-sm leading-snug text-zk-text2">
-          {row.tier === "needs" ? (
-            <>
-              <strong className="font-bold text-zk-warn-fg">Needs you:</strong>
-              {row.sentence.replace(/^Needs you:/, "")}
-            </>
-          ) : (
-            row.sentence
-          )}
-        </p>
-        {row.tier === "needs" ? (
-          <Link
-            href={answerHref}
-            className="mt-1 inline-flex min-h-8 items-center text-sm font-bold text-zk-accent hover:underline"
-          >
-            Answer <span aria-hidden="true">&nbsp;→</span>
-          </Link>
-        ) : null}
+        {row.tier === "quiet" ? (
+          // Every quiet or offline agent on one line: "Claude and X: nothing to report."
+          <p className="m-0 text-sm leading-snug text-zk-text2">
+            <strong className="font-bold text-zk-text">{row.names}</strong>: {row.sentence}
+          </p>
+        ) : (
+          <>
+            <p className="m-0 text-[13px] font-bold leading-tight text-zk-text">{row.names}</p>
+            <p className="m-0 mt-0.5 text-sm leading-snug text-zk-text2">
+              {row.tier === "needs" ? (
+                <>
+                  <strong className="font-bold text-zk-warn-fg">Needs you:</strong>
+                  {row.sentence.replace(/^Needs you:/, "")}
+                  <Link href={answerHref} className="ml-2 whitespace-nowrap font-bold text-zk-accent hover:underline">
+                    Answer <span aria-hidden="true">→</span>
+                  </Link>
+                </>
+              ) : (
+                row.sentence
+              )}
+            </p>
+          </>
+        )}
       </div>
 
       {!reduced && row.tier === "needs" && question ? (
@@ -281,7 +286,7 @@ function Row({
           role="group"
           aria-label={`Question from ${row.names}`}
           data-open={questionOpen ? "true" : "false"}
-          className="rc-qcard absolute left-14 right-0 top-[calc(100%-8px)] z-20 rounded-[14px] border border-zk-border bg-zk-surface p-3.5"
+          className="rc-qcard absolute left-12 right-0 top-[calc(100%-6px)] z-20 rounded-[14px] border border-zk-border bg-zk-surface p-3.5"
         >
           <p className="m-0 text-xs font-semibold text-zk-muted">
             #{question.issue} · {question.title}
@@ -319,8 +324,9 @@ function Row({
  *
  * Everything else waits for the person. Hover a robot and its eyes follow the
  * cursor. Tap the sleeping one and it opens an eye for 2s. Tap the raised hand
- * and the question slides out. "Got it": each robot salutes, its light turns
- * green, and it flies down into its own row in "Your agents"; then the card folds.
+ * and the question slides out. "Got it": each robot salutes and its light turns
+ * green; if "Your agents" is on screen each one then flies into its own row
+ * there. Then the card folds.
  *
  * With reduced motion on, none of that runs: the card is its text and "Got it"
  * hides it at once.
@@ -354,6 +360,9 @@ export function RollCall({
   const [entranceStill] = useState(() => entrancePlayed.has(returnId));
   const [mountedAt] = useState(() => performance.now());
   const robots = useRef(new Map<string, HTMLElement>());
+  // Whether "Your agents" is on screen right now. The walk into the table only
+  // happens if it is; otherwise the robots salute and the card just folds.
+  const tableInView = useRef(false);
   const busyUntil = useRef<Record<string, number>>({});
   const peekTimer = useRef(0);
   const doneRef = useRef(onDone);
@@ -368,6 +377,16 @@ export function RollCall({
 
   useEffect(() => () => window.clearTimeout(peekTimer.current), []);
 
+  useEffect(() => {
+    const section = document.querySelector('section[aria-labelledby="agents-heading"]');
+    if (!section || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) tableInView.current = entry.isIntersecting;
+    });
+    observer.observe(section);
+    return () => observer.disconnect();
+  }, []);
+
   // "Got it", part 1: everyone salutes and their lights turn green, then they fly.
   useEffect(() => {
     if (phase !== "salute") return;
@@ -376,6 +395,7 @@ export function RollCall({
       () => {
         const list: Flyer[] = [];
         rows.forEach((row, i) => {
+          if (!tableInView.current) return;
           const el = robots.current.get(row.id);
           if (!el) return;
           const r = el.getBoundingClientRect();
@@ -467,7 +487,7 @@ export function RollCall({
 
   return (
     <section
-      className="rc-card rounded-[20px] border border-zk-border bg-zk-surface p-4 sm:p-6"
+      className="rc-card rounded-[20px] border border-zk-border bg-zk-surface p-4 sm:px-5 sm:py-4"
       data-leaving={phase === "fold" ? "true" : undefined}
       data-still={entranceStill ? "true" : undefined}
       aria-labelledby="roll-call-title"
@@ -480,13 +500,13 @@ export function RollCall({
           type="button"
           onClick={gotIt}
           disabled={phase !== "idle"}
-          className="rc-primary inline-flex min-h-10 shrink-0 items-center rounded-full bg-electric-blue-strong px-5 text-sm font-bold text-white disabled:cursor-default"
+          className="rc-primary inline-flex min-h-9 shrink-0 items-center rounded-full bg-electric-blue-strong px-5 text-sm font-bold text-white disabled:cursor-default"
         >
           Got it
         </button>
       </div>
 
-      <ul className="m-0 mt-2 list-none p-0">
+      <ul className="m-0 mt-1 list-none p-0">
         {rows.map((row, i) => (
           <Row
             key={row.id}
@@ -511,13 +531,13 @@ export function RollCall({
         ))}
       </ul>
 
-      <div className="mt-1 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-zk-divider pt-3.5">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-zk-divider pt-2">
         <p className="m-0 text-[13px] text-zk-muted">You earned {points.toLocaleString("en-US")} pts while away.</p>
         <button
           type="button"
           onClick={dismiss}
           disabled={phase !== "idle"}
-          className="rc-press -mr-2 inline-flex min-h-8 items-center rounded-full px-2 text-[13px] font-semibold text-zk-muted underline-offset-2 hover:text-zk-text hover:underline"
+          className="rc-press -mr-2 inline-flex min-h-7 items-center rounded-full px-2 text-[13px] font-semibold text-zk-muted underline-offset-2 hover:text-zk-text hover:underline"
         >
           Don&apos;t show this
         </button>

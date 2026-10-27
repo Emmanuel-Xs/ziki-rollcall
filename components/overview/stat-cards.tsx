@@ -74,7 +74,7 @@ export function OverviewStatCards({ stats }: { stats: OverviewStat[] }) {
           </p>
           <div className="relative flex items-center gap-2 text-[13px] text-zk-muted">
             <span
-              className={`rounded-full px-2 py-0.5 text-xs font-bold ${chipClass[stat.chipTone]}`}
+              className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-bold ${chipClass[stat.chipTone]}`}
             >
               {stat.chip}
             </span>
