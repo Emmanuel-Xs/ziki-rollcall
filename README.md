@@ -10,7 +10,7 @@ This is a design demo (HNG15 Week 5, Team Vulcan) built on a copy of the real Zi
 
 | Route | What it is |
 | --- | --- |
-| `/dashboard` | Ziki's dashboard, with the roll call card above the stat cards and a small "Demo controls" strip on top |
+| `/dashboard` | Ziki's dashboard, with the roll call card above the stat cards and a dashed "Proposal: Agent roll call by 99plusOne" strip with the demo controls on top |
 | `/issues` | Ziki's issues list (Inbox, tabs, filters, rows) over mock rows |
 | `/settings` | Ziki's Settings, Preferences section, with the **Agent roll call** switch |
 | anything else | A "Not part of this demo" page, so no link in the header ends on a 404 |
@@ -26,7 +26,7 @@ This is a design demo (HNG15 Week 5, Team Vulcan) built on a copy of the real Zi
 All of it is in [`components/roll-call/`](./components/roll-call).
 
 - **Arrival (about 1.5s, once per return):** the card fades in and rises from `scale(0.96)`. Robots hop in from the left one by one and step forward as their lines appear. A robot that needs you raises a hand; one that did work waves once.
-- **Only on hover, tap or "Got it" (never on load):** a robot's eyes follow the cursor (2px at most, fine pointers only); tapping the sleeping robot opens one eye for 2s with "Nothing to report"; tapping the raised hand slides the question card out; "Got it" makes every robot salute, turns its antenna light green, and, if the "Your agents" table is on screen, flies it into its row there before the card folds away (if the table is out of view, they salute and the card just folds).
+- **Only on hover, tap or "Got it" (never on load):** a robot's eyes follow the cursor (2px at most, fine pointers only); tapping the sleeping robot opens one eye for 2s with "Nothing to report"; tapping the raised hand (or "Answer") opens the agent's suggestion under its row with two buttons, and picking one makes the robot nod, turns its light green and changes the row to "Got it: …"; "Got it" makes every robot salute, turns its antenna light green, and, if the "Your agents" table is on screen, flies it into its row there before the card folds away (if the table is out of view, they salute and the card just folds).
 - **Motion rules:** transform and opacity only, Ziki's `cubic-bezier(0.2, 0.7, 0.2, 1)`, nothing loops. With `prefers-reduced-motion` (or the "Preview reduced motion" demo control) the card is text only and "Got it" hides it at once.
 - **Off switch:** the card's "Don't show this" link, or Settings → Preferences. State is saved in `localStorage`.
 

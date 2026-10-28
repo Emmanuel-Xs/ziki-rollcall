@@ -24,8 +24,21 @@ export type AgentEvent = {
   goodToMerge?: boolean
 }
 
-/** Like Ziki's AgentQuestion: something the agent asked and nobody has answered. */
-export type AgentQuestion = { issue: number; title: string; text: string }
+/** One tap-to-answer option. `done` finishes "Got it: ..." on the row. */
+export type AnswerChoice = { id: string; label: string; done: string }
+
+/**
+ * Like Ziki's AgentQuestion: something the agent asked and nobody has answered.
+ * Here the agent also brings a suggestion and the answers it can act on, so the
+ * owner can reply in one tap.
+ */
+export type AgentQuestion = {
+  issue: number
+  title: string
+  text: string
+  suggestion: string
+  choices: AnswerChoice[]
+}
 
 export type RollAgent = {
   id: string
@@ -62,7 +75,16 @@ export const AGENTS: RollAgent[] = [
     name: 'PlusOne Review 3',
     status: 'waiting',
     events: [{ name: 'comment.created', issue: 183, title: T.i183, hoursAgo: 2.5 }],
-    question: { issue: 183, title: T.i183, text: 'Should #183 fix the web app too, or only the mobile chats list?' },
+    question: {
+      issue: 183,
+      title: T.i183,
+      text: 'Should #183 fix the web app too, or only the mobile chats list?',
+      suggestion: 'Mobile only for now, fixing the shared type widens review to 3 apps',
+      choices: [
+        { id: 'mobile', label: 'Mobile only', done: 'mobile only' },
+        { id: 'web', label: 'Fix web too', done: 'fixing web too' },
+      ],
+    },
   },
   {
     id: 'a1',

@@ -1,11 +1,11 @@
 "use client";
 
 import "./rollcall.css";
-import Link from "next/link";
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { AgentGraphic, type AgentGesture } from "@/components/agent-graphic";
 import type { AgentStatus } from "@/lib/dashboard-overview";
+import type { AnswerChoice } from "./data";
 import type { RollRow } from "./summarize";
 
 // Motion timing, in ms. Keep in step with rollcall.css.
@@ -25,7 +25,7 @@ const LEAVE_MS = 180;
 const PEEK_MS = 2000; // how long a sleeping robot keeps an eye open
 
 const GREEN = "#22C55E"; // the "working" antenna light
-const ROBOT = 36; // px; the card is short so the stat cards stay in view
+const ROBOT = 44; // px; only here, on the roll call card
 
 type Phase = "idle" | "salute" | "fly" | "fold";
 type Leaving = "gotit" | "disable";
@@ -145,11 +145,13 @@ function Row({
   lit,
   again,
   onReplay,
-  questionOpen,
-  onToggleQuestion,
+  replyOpen,
+  onToggleReply,
+  answer,
+  nod,
+  onAnswer,
   peek,
   onPeek,
-  answerHref,
   registerRobot,
 }: {
   row: RollRow;
@@ -160,29 +162,52 @@ function Row({
   lit: boolean;
   again: number;
   onReplay: (id: string, firstEnds: number, ms: number) => void;
-  questionOpen: boolean;
-  onToggleQuestion: (id: string) => void;
+  replyOpen: boolean;
+  onToggleReply: (id: string) => void;
+  /** The option the owner picked for this row's question, once they have. */
+  answer?: AnswerChoice;
+  /** Counts the nods, so each answer plays one. */
+  nod: number;
+  onAnswer: (id: string, choice: AnswerChoice) => void;
   peek: boolean;
   onPeek: (id: string) => void;
-  answerHref: string;
   registerRobot: (id: string, el: HTMLElement | null) => void;
 }) {
   const rowRef = useRef<HTMLLIElement>(null);
   const eyesRef = useRef<SVGGElement>(null);
+  const lineRef = useRef<HTMLDivElement>(null);
+  const replyRef = useRef<HTMLDivElement>(null);
+  const answered = Boolean(answer);
   const offline = row.tier === "quiet" && row.agent.status === "offline";
   const saluting = phase !== "idle";
   const interactive = !reduced && phase === "idle";
   useEyeFollow(rowRef, eyesRef, !reduced && !offline);
 
+  // The buttons that were pressed are gone once a choice is made: keep focus on the row's text.
+  useEffect(() => {
+    if (answered) lineRef.current?.focus({ preventScroll: true });
+  }, [answered]);
+
+  // The reply opens under its row; on a phone, keep it clear of the bottom nav.
+  useEffect(() => {
+    if (replyOpen) replyRef.current?.scrollIntoView({ block: "nearest" });
+  }, [replyOpen]);
+
   const hopDelay = ROW_START + index * ROW_STAGGER;
   const base = baseGesture(row);
-  const gesture: AgentGesture | undefined = reduced ? undefined : saluting ? "salute" : base;
+  const gesture: AgentGesture | undefined = reduced
+    ? undefined
+    : saluting
+      ? "salute"
+      : answered && base === "raise"
+        ? "lower"
+        : base;
   const gestureMs = base === "raise" ? RAISE_MS : WAVE_MS;
   const firstEnds = hopDelay + GESTURE_AFTER + gestureMs;
-  const gestureDelay = saluting ? index * SALUTE_STAGGER : again ? 0 : hopDelay + GESTURE_AFTER;
+  const gestureDelay = saluting ? index * SALUTE_STAGGER : again || answered ? 0 : hopDelay + GESTURE_AFTER;
   const sleep = reduced || saluting ? undefined : offline ? (peek ? "peek" : "asleep") : undefined;
-  // The light turns green mid-salute, except on a robot that really is offline.
-  const status: AgentStatus = lit && !offline ? "working" : row.agent.status;
+  // The light turns green when answered or mid-salute, except on a robot that really is offline.
+  const status: AgentStatus = (lit || answered) && !offline ? "working" : row.agent.status;
 
   const robot = (
     <AgentGraphic
@@ -190,25 +215,26 @@ function Row({
       status={status}
       size={ROBOT}
       gesture={gesture}
-      gestureKey={again + (saluting ? 1000 : 0)}
+      gestureKey={again + (saluting ? 1000 : 0) + (answered ? 500 : 0)}
       gestureDelay={gestureDelay}
-      still={entranceStill && !again && !saluting}
+      still={entranceStill && !again && !saluting && !answered}
+      nod={reduced ? 0 : nod}
       eyesRef={eyesRef}
       sleep={sleep}
       pulse={false}
     />
   );
 
-  let wrapped: React.ReactNode = <span className="block h-9 w-9">{robot}</span>;
-  if (interactive && row.tier === "needs") {
+  let wrapped: React.ReactNode = <span className="block h-11 w-11">{robot}</span>;
+  if (interactive && row.tier === "needs" && !answered) {
     wrapped = (
       <button
         type="button"
-        aria-label={`${row.names}: ${questionOpen ? "hide" : "show"} the question`}
-        aria-expanded={questionOpen}
+        aria-label={`${row.names}: ${replyOpen ? "hide" : "show"} the suggested answer`}
+        aria-expanded={replyOpen}
         aria-controls={`rc-q-${row.id}`}
-        onClick={() => onToggleQuestion(row.id)}
-        className="block h-9 w-9 cursor-pointer rounded-xl border-0 bg-transparent p-0"
+        onClick={() => onToggleReply(row.id)}
+        className="block h-11 w-11 cursor-pointer rounded-xl border-0 bg-transparent p-0"
       >
         {robot}
       </button>
@@ -222,7 +248,7 @@ function Row({
         onPointerEnter={(e) => e.pointerType === "mouse" && play()}
         onPointerDown={(e) => e.pointerType !== "mouse" && play()}
         onFocus={(e) => e.currentTarget.matches(":focus-visible") && play()}
-        className="block h-9 w-9 cursor-default rounded-xl border-0 bg-transparent p-0"
+        className="block h-11 w-11 cursor-default rounded-xl border-0 bg-transparent p-0"
       >
         {robot}
       </button>
@@ -233,7 +259,7 @@ function Row({
         type="button"
         aria-label={`${row.names} is offline: tap to wake`}
         onClick={() => onPeek(row.id)}
-        className="block h-9 w-9 cursor-pointer rounded-xl border-0 bg-transparent p-0"
+        className="block h-11 w-11 cursor-pointer rounded-xl border-0 bg-transparent p-0"
       >
         {robot}
       </button>
@@ -241,74 +267,100 @@ function Row({
   }
 
   const question = row.agent.question;
+  const asking = row.tier === "needs" && !answered;
   return (
-    <li ref={rowRef} className="relative flex items-center gap-3 border-t border-zk-divider py-2 first:border-t-0">
-      <div
-        ref={(el) => registerRobot(row.id, el)}
-        className="rc-robot shrink-0"
-        data-flown={phase === "fly" || phase === "fold" ? "true" : undefined}
-        style={{ "--rc-hop-delay": `${hopDelay}ms` } as CSSProperties}
-      >
-        {wrapped}
-      </div>
-      <div
-        className="rc-line min-w-0 flex-1"
-        style={{ "--rc-line-delay": `${hopDelay + LINE_AFTER}ms` } as CSSProperties}
-      >
-        {row.tier === "quiet" ? (
-          // Every quiet or offline agent on one line: "Claude and X: nothing to report."
-          <p className="m-0 text-sm leading-snug text-zk-text2">
-            <strong className="font-bold text-zk-text">{row.names}</strong>: {row.sentence}
-          </p>
-        ) : (
-          <>
-            <p className="m-0 text-[13px] font-bold leading-tight text-zk-text">{row.names}</p>
-            <p className="m-0 mt-0.5 text-sm leading-snug text-zk-text2">
-              {row.tier === "needs" ? (
-                <>
-                  <strong className="font-bold text-zk-warn-fg">Needs you:</strong>
-                  {row.sentence.replace(/^Needs you:/, "")}
-                  <Link href={answerHref} className="ml-2 whitespace-nowrap font-bold text-zk-accent hover:underline">
-                    Answer <span aria-hidden="true">→</span>
-                  </Link>
-                </>
-              ) : (
-                row.sentence
-              )}
+    <li ref={rowRef} className="relative border-t border-zk-divider py-2 first:border-t-0">
+      <div className="flex items-center gap-3">
+        <div
+          ref={(el) => registerRobot(row.id, el)}
+          className="rc-robot shrink-0"
+          data-flown={phase === "fly" || phase === "fold" ? "true" : undefined}
+          style={{ "--rc-hop-delay": `${hopDelay}ms` } as CSSProperties}
+        >
+          {wrapped}
+        </div>
+        <div
+          ref={lineRef}
+          tabIndex={-1}
+          aria-live={row.tier === "needs" ? "polite" : undefined}
+          className="rc-line min-w-0 flex-1 outline-none"
+          style={{ "--rc-line-delay": `${hopDelay + LINE_AFTER}ms` } as CSSProperties}
+        >
+          {row.tier === "quiet" ? (
+            // Every quiet or offline agent on one line: "Claude and X: nothing to report."
+            <p
+              data-dim={offline && peek && !reduced ? "true" : undefined}
+              className="rc-dim m-0 text-sm leading-snug text-zk-text2"
+            >
+              <strong className="font-bold text-zk-text">{row.names}</strong>: {row.sentence}
             </p>
-          </>
-        )}
+          ) : (
+            <>
+              <p className="m-0 text-[13px] font-bold leading-tight text-zk-text">{row.names}</p>
+              {answer ? (
+                <p className="rc-swap m-0 mt-0.5 text-sm leading-snug text-zk-text2">
+                  <strong className="font-bold text-zk-ok-fg">Got it:</strong> {answer.done}.
+                </p>
+              ) : (
+                <p className="m-0 mt-0.5 text-sm leading-snug text-zk-text2">
+                  {asking ? (
+                    <>
+                      <strong className="font-bold text-zk-warn-fg">Needs you:</strong>
+                      {row.sentence.replace(/^Needs you:/, "")}
+                      <button
+                        type="button"
+                        aria-expanded={replyOpen}
+                        aria-controls={`rc-q-${row.id}`}
+                        onClick={() => onToggleReply(row.id)}
+                        className="ml-2 inline-flex min-h-7 cursor-pointer items-center whitespace-nowrap border-0 bg-transparent p-0 text-sm font-bold text-zk-accent hover:underline"
+                      >
+                        Answer <span aria-hidden="true">&nbsp;→</span>
+                      </button>
+                    </>
+                  ) : (
+                    row.sentence
+                  )}
+                </p>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
-      {!reduced && row.tier === "needs" && question ? (
+      {replyOpen && asking && question ? (
         <div
+          ref={replyRef}
           id={`rc-q-${row.id}`}
           role="group"
-          aria-label={`Question from ${row.names}`}
-          data-open={questionOpen ? "true" : "false"}
-          className="rc-qcard absolute left-12 right-0 top-[calc(100%-6px)] z-20 rounded-[14px] border border-zk-border bg-zk-surface p-3.5"
+          aria-label={`Suggested answer from ${row.names}`}
+          className="rc-reply ml-14 mt-2 rounded-[14px] border border-zk-border bg-zk-bg p-3 max-lg:scroll-mb-28"
         >
-          <p className="m-0 text-xs font-semibold text-zk-muted">
-            #{question.issue} · {question.title}
-          </p>
-          <p className="m-0 mt-1 text-sm leading-snug text-zk-text">{question.text}</p>
-          <Link
-            href={answerHref}
-            tabIndex={questionOpen ? 0 : -1}
-            className="mt-1 inline-flex min-h-8 items-center text-sm font-bold text-zk-accent hover:underline"
-          >
-            Answer <span aria-hidden="true">&nbsp;→</span>
-          </Link>
+          <p className="m-0 text-xs font-semibold text-zk-muted">{row.names} suggests</p>
+          <p className="m-0 mt-1 text-sm leading-snug text-zk-text">{question.suggestion}</p>
+          <div className="mt-2.5 flex flex-wrap gap-2">
+            {question.choices.map((choice) => (
+              <button
+                key={choice.id}
+                type="button"
+                onClick={() => onAnswer(row.id, choice)}
+                className="rc-press inline-flex min-h-9 items-center rounded-full border border-zk-border bg-zk-surface px-4 text-sm font-semibold text-zk-text"
+              >
+                {choice.label}
+              </button>
+            ))}
+          </div>
         </div>
       ) : null}
 
       {!reduced && offline ? (
-        <span
-          aria-hidden="true"
-          data-show={peek ? "true" : "false"}
-          className="rc-bubble pointer-events-none absolute -top-3 left-12 z-10 whitespace-nowrap rounded-full border border-zk-border bg-zk-surface px-2.5 py-0.5 text-xs font-semibold text-zk-text2"
-        >
-          Nothing to report
+        // To the right of the robot, level with it, so it never reaches the row above.
+        <span aria-hidden="true" className="pointer-events-none absolute left-14 top-1/2 z-10 -translate-y-1/2">
+          <span
+            data-show={peek ? "true" : "false"}
+            className="rc-bubble block whitespace-nowrap rounded-full border border-zk-border bg-zk-surface px-3 py-1 text-xs font-semibold text-zk-text2"
+          >
+            Nothing to report
+          </span>
         </span>
       ) : null}
     </li>
@@ -324,7 +376,8 @@ function Row({
  *
  * Everything else waits for the person. Hover a robot and its eyes follow the
  * cursor. Tap the sleeping one and it opens an eye for 2s. Tap the raised hand
- * and the question slides out. "Got it": each robot salutes and its light turns
+ * (or "Answer") and the agent's suggestion opens under its row with two buttons;
+ * pick one and the robot nods, its light turns green and the row says what you chose. "Got it": each robot salutes and its light turns
  * green; if "Your agents" is on screen each one then flies into its own row
  * there. Then the card folds.
  *
@@ -337,7 +390,6 @@ export function RollCall({
   awayLabel,
   points,
   reduced,
-  answerHref,
   onDone,
 }: {
   rows: RollRow[];
@@ -346,7 +398,6 @@ export function RollCall({
   awayLabel: string;
   points: number;
   reduced: boolean;
-  answerHref: string;
   onDone: (kind: Leaving) => void;
 }) {
   const [phase, setPhase] = useState<Phase>("idle");
@@ -355,7 +406,9 @@ export function RollCall({
   const [flyers, setFlyers] = useState<Flyer[] | null>(null);
   const [landed, setLanded] = useState(0);
   const [replays, setReplays] = useState<Record<string, number>>({});
-  const [openQuestion, setOpenQuestion] = useState<string | null>(null);
+  const [openReply, setOpenReply] = useState<string | null>(null);
+  const [answers, setAnswers] = useState<Record<string, AnswerChoice>>({});
+  const [nods, setNods] = useState<Record<string, number>>({});
   const [peek, setPeek] = useState(false);
   const [entranceStill] = useState(() => entrancePlayed.has(returnId));
   const [mountedAt] = useState(() => performance.now());
@@ -436,27 +489,18 @@ export function RollCall({
     return () => window.clearTimeout(t);
   }, [phase, kind]);
 
-  // The question card closes on Escape or a press outside the card.
+  // The reply closes on Escape. A press elsewhere leaves it be: closing it would move the page under the pointer.
   useEffect(() => {
-    if (!openQuestion) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpenQuestion(null);
-    const onDown = (e: PointerEvent) => {
-      if (!(e.target as Element | null)?.closest(`#rc-q-${openQuestion}, [aria-controls="rc-q-${openQuestion}"]`)) {
-        setOpenQuestion(null);
-      }
-    };
+    if (!openReply) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpenReply(null);
     document.addEventListener("keydown", onKey);
-    document.addEventListener("pointerdown", onDown);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.removeEventListener("pointerdown", onDown);
-    };
-  }, [openQuestion]);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [openReply]);
 
   const gotIt = () => {
     if (phase !== "idle") return;
     if (reduced) return onDone("gotit");
-    setOpenQuestion(null);
+    setOpenReply(null);
     setKind("gotit");
     setPhase("salute");
   };
@@ -464,9 +508,16 @@ export function RollCall({
   const dismiss = () => {
     if (phase !== "idle") return;
     if (reduced) return onDone("disable");
-    setOpenQuestion(null);
+    setOpenReply(null);
     setKind("disable");
     setPhase("fold");
+  };
+
+  // A choice: the robot nods (its arm comes down, its light turns green) and the row says what was chosen.
+  const answer = (id: string, choice: AnswerChoice) => {
+    setAnswers((a) => ({ ...a, [id]: choice }));
+    setNods((n) => ({ ...n, [id]: (n[id] ?? 0) + 1 }));
+    setOpenReply(null);
   };
 
   // A gesture that is still playing is left alone: restarting it would snap the
@@ -518,11 +569,13 @@ export function RollCall({
             lit={lit}
             again={replays[row.id] ?? 0}
             onReplay={replay}
-            questionOpen={openQuestion === row.id}
-            onToggleQuestion={(id) => setOpenQuestion((cur) => (cur === id ? null : id))}
+            replyOpen={openReply === row.id}
+            onToggleReply={(id) => setOpenReply((cur) => (cur === id ? null : id))}
+            answer={answers[row.id]}
+            nod={nods[row.id] ?? 0}
+            onAnswer={answer}
             peek={peek}
             onPeek={wake}
-            answerHref={answerHref}
             registerRobot={(id, el) => {
               if (el) robots.current.set(id, el);
               else robots.current.delete(id);
@@ -531,13 +584,15 @@ export function RollCall({
         ))}
       </ul>
 
+      {/* Below lg the bottom nav covers the last ~4.5rem of the screen. <main> already pads the page
+          (max-lg:pb-28); the scroll margin on "Don't show this" keeps it clear of the nav when it is tabbed to. */}
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-zk-divider pt-2">
         <p className="m-0 text-[13px] text-zk-muted">You earned {points.toLocaleString("en-US")} pts while away.</p>
         <button
           type="button"
           onClick={dismiss}
           disabled={phase !== "idle"}
-          className="rc-press -mr-2 inline-flex min-h-7 items-center rounded-full px-2 text-[13px] font-semibold text-zk-muted underline-offset-2 hover:text-zk-text hover:underline"
+          className="rc-press -mr-2 inline-flex min-h-7 max-lg:scroll-mb-28 items-center rounded-full px-2 text-[13px] font-semibold text-zk-muted underline-offset-2 hover:text-zk-text hover:underline"
         >
           Don&apos;t show this
         </button>

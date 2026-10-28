@@ -20,13 +20,18 @@ export function DemoControls() {
   return (
     <section aria-labelledby="demo-controls-title" className="rounded-[20px] border border-dashed border-zk-border px-4 py-3">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
-        <h2 id="demo-controls-title" className="m-0 text-xs font-bold uppercase tracking-wider text-zk-accent">
-          Demo controls
-        </h2>
-        <p className="m-0 text-[13px] text-zk-muted">
+        <div className="min-w-0">
+          <h2 id="demo-controls-title" className="m-0 text-sm font-bold text-zk-accent">
+            Proposal: Agent roll call by 99plusOne
+          </h2>
+          <p className="m-0 mt-0.5 text-[13px] text-zk-muted">
+            The card below is the new part. Everything else is Ziki as it is today.
+          </p>
+        </div>
+        <p className="m-0 text-[13px] text-zk-muted sm:ml-auto">
           Card: <strong className="font-semibold text-zk-text2">{status}</strong>
         </p>
-        <div className="flex flex-wrap gap-2 sm:ml-auto">
+        <div className="flex flex-wrap gap-2">
           <button type="button" className={demoButton} onClick={rc.simulate} disabled={!rc.ready}>
             Simulate coming back
           </button>

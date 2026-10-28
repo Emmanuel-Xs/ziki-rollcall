@@ -84,7 +84,6 @@ export function RollCallCard() {
         awayLabel={formatAway(rc.awayMs)}
         points={POINTS_EARNED}
         reduced={rc.reduced}
-        answerHref="/issues"
         onDone={done}
       />
     </div>

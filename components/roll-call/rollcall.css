@@ -7,7 +7,8 @@
      100ms+ each robot hops in from the left, 60ms apart       480ms
      +300ms its line fades in as the robot steps forward       240ms
      +420ms its arm waves once, or lifts and stays up          800ms / 300ms
-   Everything else waits for the person: hover or tap on a robot, or "Got it". */
+   Everything else waits for the person: hover or tap on a robot, answering a
+   question (a nod and the arm comes down, 360ms), or "Got it". */
 
 :root {
   --rc-ease: cubic-bezier(0.2, 0.7, 0.2, 1); /* Ziki's entrance curve (overview.css) */
@@ -66,19 +67,20 @@
   }
 }
 
-/* Lift, swing twice, settle. */
+/* Lift, swing twice, settle. The arm is long and the swing wide (about 45deg
+   each way) so a wave reads at a glance at 44px. */
 @keyframes rc-wave {
   0% {
     transform: rotate(0deg);
   }
   25% {
-    transform: rotate(-80deg);
+    transform: rotate(-100deg);
   }
   45% {
     transform: rotate(-50deg);
   }
   65% {
-    transform: rotate(-80deg);
+    transform: rotate(-100deg);
   }
   85% {
     transform: rotate(-50deg);
@@ -93,7 +95,17 @@
     transform: rotate(0deg);
   }
   to {
-    transform: rotate(-80deg);
+    transform: rotate(-78deg);
+  }
+}
+
+/* A raised arm comes back down once its question is answered. */
+@keyframes rc-lower {
+  from {
+    transform: rotate(-78deg);
+  }
+  to {
+    transform: rotate(0deg);
   }
 }
 
@@ -103,13 +115,54 @@
     transform: rotate(0deg);
   }
   45% {
-    transform: rotate(-105deg);
+    transform: rotate(-100deg);
   }
   70% {
-    transform: rotate(-122deg);
+    transform: rotate(-114deg);
   }
   100% {
-    transform: rotate(-105deg);
+    transform: rotate(-100deg);
+  }
+}
+
+/* A nod: the head dips twice and comes back. Two copies, so a second nod restarts it. */
+@keyframes rc-nod-a {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  25%,
+  75% {
+    transform: translateY(3px);
+  }
+  50% {
+    transform: translateY(0);
+  }
+}
+
+@keyframes rc-nod-b {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  25%,
+  75% {
+    transform: translateY(3px);
+  }
+  50% {
+    transform: translateY(0);
+  }
+}
+
+/* The answer panel and the new row text arrive with a small rise. */
+@keyframes rc-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 
@@ -158,12 +211,24 @@
 
 /* Rests raised, so a reader with motion off still sees who needs them. */
 .rc-arm-raise {
-  transform: rotate(-80deg);
+  transform: rotate(-78deg);
   animation: rc-raise 300ms var(--rc-ease) both;
 }
 
+.rc-arm-lower {
+  animation: rc-lower 300ms var(--rc-ease) both;
+}
+
+.rc-nod-a {
+  animation: rc-nod-a 360ms var(--rc-ease) both;
+}
+
+.rc-nod-b {
+  animation: rc-nod-b 360ms var(--rc-ease) both;
+}
+
 .rc-arm-salute {
-  transform: rotate(-105deg);
+  transform: rotate(-100deg);
   animation: rc-salute 320ms var(--rc-ease) both;
 }
 
@@ -193,29 +258,14 @@ svg[data-sleep='peek'] .rc-eye-l {
   transform: scaleY(0.12);
 }
 
-/* The question card slides out from the raised hand and back into it. */
-.rc-qcard {
-  transform-origin: 14px 0;
-  opacity: 0;
-  visibility: hidden;
-  transform: translate(-16px, -4px) scale(0.94);
-  transition:
-    opacity 160ms var(--rc-ease),
-    transform 160ms var(--rc-ease),
-    visibility 0s linear 160ms;
+/* The inline answer opens under its row; the text of an answered row swaps in. */
+.rc-reply,
+.rc-swap {
+  animation: rc-rise 160ms var(--rc-ease) both;
 }
 
-.rc-qcard[data-open='true'] {
-  opacity: 1;
-  visibility: visible;
-  transform: none;
-  transition:
-    opacity 160ms var(--rc-ease),
-    transform 160ms var(--rc-ease),
-    visibility 0s;
-}
-
-/* "Nothing to report", shown for 2s after the sleeping robot is tapped. */
+/* "Nothing to report", shown for 2s after the sleeping robot is tapped. It sits
+   to the right of the robot, where the row's own text is, which dims meanwhile. */
 .rc-bubble {
   opacity: 0;
   transform: translateY(4px);
@@ -227,6 +277,14 @@ svg[data-sleep='peek'] .rc-eye-l {
 .rc-bubble[data-show='true'] {
   opacity: 1;
   transform: none;
+}
+
+.rc-dim {
+  transition: opacity 140ms var(--rc-ease);
+}
+
+.rc-dim[data-dim='true'] {
+  opacity: 0;
 }
 
 /* A robot flying to its row (positioned and animated from script). */
